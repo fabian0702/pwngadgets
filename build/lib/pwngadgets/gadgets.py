@@ -112,10 +112,10 @@ leakedSegments = re.findall(r"{self.leakRegex}", leak)
 
 def genTemplate(elfName):
     return f'''
-from pwn inport *
+from pwn import *
 import shlex
 
-def ncatRemote(url:str) -> pwn.remote:
+def ncatRemote(url:str) -> remote:
     args = shlex.split(url)
     return remote(host=args[-2], port=int(args[-1]), ssl='--ssl' in url)
 
@@ -147,8 +147,6 @@ def ncatRemote(url:str) -> pwn.remote:
     args = shlex.split(url)
     return pwn.remote(host=args[-2], port=int(args[-1]), ssl='--ssl' in url)
     
-
-
 def getProcMappings(p:pwn.process | int) -> str:
     if type(p) == pwn.process:
         pid = p.proc.pid
@@ -163,3 +161,55 @@ def getProcMappings(p:pwn.process | int) -> str:
     except (OSError, FileNotFoundError):
         raise ProcNotFoundException('the process specified by the given pid was not found or not accessable.')
     return content
+
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium import *
+import time, requests, os, json
+
+def getRemoteFromChallengeName(challengeName:str) -> pwn.remote:
+    def getAuthToken(forceReauth=False):
+        env = os.environ.get('bergAuth', None)
+
+        if not env is None and not forceReauth:
+            return env
+        browser = webdriver.Chrome()
+        browser.get('https://library.m0unt41n.ch/api/v1/login')
+        while not browser.current_url == 'https://library.m0unt41n.ch/':
+            time.sleep(0.1)
+
+        bergAuth = [cookie for cookie in browser.get_cookies() if cookie['name'] == 'berg-auth'][0]
+        browser.close()
+        os.environ.update({'bergAuth':bergAuth['value']})
+        return bergAuth['value']
+
+    session = requests.Session()
+
+    self = {'player':None}
+
+    while self['player'] is None:
+        authToken = getAuthToken()
+        request = requests.get('https://library.m0unt41n.ch/api/v1/self', cookies={'berg-auth':authToken})
+        self = json.loads(request.content)
+        session.cookies = request.cookies
+
+    print(self)
+    currentChallenge = self['challengeInstance']
+
+    if not currentChallenge['name'] is None and not currentChallenge['name'] == challengeName:
+        print(f'terminating challenge instance: {currentChallenge["name"]}')
+        session.post('https://library.m0unt41n.ch/api/v1/challengeInstance/stop')
+        self = json.loads(session.get('https://library.m0unt41n.ch/api/v1/self').content)
+        currentChallenge = self['challengeInstance']
+
+    if currentChallenge['name'] is None:
+        session.post('https://library.m0unt41n.ch/api/v1/challengeInstance/start', data={'challenge':challengeName})
+        print(f'started challenge instance: {challengeName}')
+        self = json.loads(session.get('https://library.m0unt41n.ch/api/v1/self').content)
+        currentChallenge = self['challengeInstance']
+
+    ssl = 'chall' in currentChallenge['services']['hostname']
+
+    return pwn.remote(currentChallenge['services']['hostname'], currentChallenge['services']['port'], typ=currentChallenge['services']['protocol'], ssl=ssl)
