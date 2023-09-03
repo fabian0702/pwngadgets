@@ -2,6 +2,7 @@ import pwn
 import re
 import binascii
 import shlex
+import string
 
 class InvalidProcException(Exception):
     "Raised when the input is not a valide pwn.process or a valide pid"
@@ -9,6 +10,14 @@ class InvalidProcException(Exception):
 
 class ProcNotFoundException(Exception):
     "Raised when the input is not a valide pwn.process or a valide pid"
+    pass
+
+class InvalidMemoryExeption(Exception):
+    "Raised when the requested Memory region is not mapped"
+    pass
+
+class InvalideHexString(Exception):
+    "Raised when the hex string is an odd length"
     pass
 
 class Leak:
@@ -72,25 +81,15 @@ class Leak:
         if len(possibleSegments):
             return possibleSegments[0]
         return None
-    def flipEndianess(self, value:str):
-        return ''.join([''.join([value[n:n+8][i:i+2] for i in range(0, 8, 2)][::-1]) for n in range(0, len(value), 8)])
+    
     def findHexValue(self, hexValue, endianess = 'little', previousMatches:list[int]=None) -> list[int]:
         """Searches a hexvalue in the dump and return the indecies found as a list, can use result from previous link to further filter the indecies"""
         if not endianess == self.endianess:
-            hexValue = self.flipEndianess(hexValue)
+            hexValue = flipEndianess(hexValue)
         matches = [i for i, element in enumerate(self.leakElements) if hexValue in element]
         if not previousMatches is None:
             return [i for i in matches if i in previousMatches]
         return matches
-    
-    def decodeString(self, hexValues:list[str], endianess:str=None, crop=False):
-        if endianess is None:
-            endianess = self.endianess
-        hexStr = ''.join(hexValues).replace('0x', '')
-        if crop and len(hexStr) % 2 == 1:
-            hexStr = hexStr[:-1]
-        decodedString = binascii.unhexlify(hexStr)
-        return decodedString[::-1]
 
     def genCode(self):
         procSegment = self.getSegment(self.procname, hasToHaveIndexInLeak=True)
@@ -144,24 +143,83 @@ def getPayloadOffset(p:pwn.process, payload=b''):
     return adjustedPayload, payloadLength
 
 def ncatRemote(url:str) -> pwn.remote:
+    """Function to convert a ncat command to pwn.remote"""
     args = shlex.split(url)
     return pwn.remote(host=args[-2], port=int(args[-1]), ssl='--ssl' in url)
     
-def getProcMappings(p:pwn.process | int) -> str:
+def _validateProc(p):
+    """Internal Function to validate a given process argument"""
     if type(p) == pwn.process:
         pid = p.proc.pid
     elif type(p) == int and p > 0:
         pid = p
     else:
         raise InvalidProcException('the given argument is neither a valide pwn.process or a valide pid')
+    if not os.path.exists(f'/proc/{pid}'):
+        raise InvalidProcException(f"No process found with pid: {pid}")
+    return pid
+
+def getProcMappings(p:pwn.process | int, printMap:bool=True) -> str:
+    """Function to get the memory map of a process"""
+    pid = _validateProc(p)
     try:
         with open(f'/proc/{pid}/maps') as f:
             content = f.read()
-            print(content)
+            if printMap:
+                print(content)
     except (OSError, FileNotFoundError):
         raise ProcNotFoundException('the process specified by the given pid was not found or not accessable.')
     return content
 
+def flipEndianess(value:str|bytes):
+    """Function to flip the endianess of a hex string or bytes"""
+    if type(value) == str:
+        if len(value) % 2 == 1:
+            raise InvalideHexString('Hex string is an odd length')
+        if not all(c in string.hexdigits for c in value):
+            raise InvalideHexString('Hex string contains nonascii values')
+        rawHex = value.replace('0x', '')
+        rawFlipedHex = ''.join([''.join([rawHex[n:n+8][i:i+2] for i in range(0, 8, 2)][::-1]) for n in range(0, len(rawHex), 8)])
+        return '0x' if '0x' in value else '' + rawFlipedHex
+    if type(value) == bytes:
+        return value[::-1]
+    
+def readProcessMemory(p:pwn.process | int, startAddress:int, endAddress:int) -> bytes:
+    pid = _validateProc(p)
+    if startAddress > endAddress:
+        raise InvalidMemoryExeption('startAddress has to be smaller than endAddress')
+    memMap = getProcMappings(p, printMap=False)
+    inMappedArea = False
+    for line in memMap.splitlines():  # for each mapped region
+        m = re.match(r'([0-9A-Fa-f]+)-([0-9A-Fa-f]+) ([-r])', line)
+        if m.group(3) == 'r':  # readable region
+            start = int(m.group(1), 16)
+            end = int(m.group(2), 16)
+            if start < startAddress and end > endAddress:
+                inMappedArea = True
+
+    if not inMappedArea:
+        raise InvalidMemoryExeption('The requested Memory chunk is not mapped')
+    
+    with open('/proc/{pid}/mem', 'rb') as f:
+        f.seek(startAddress)
+        mem = f.read(endAddress-startAddress)
+        return mem
+
+def decodeString(hexValues:list[str]|str, endianess:str='little', crop=False):
+    """Function to convert a hex string or a list of hex strings to bytes"""
+    if type(hexStr) == list[str]:
+        hexStr = ''.join(hexValues)
+    if not all(c in string.hexdigits for c in hexStr):
+        raise InvalideHexString('Hex string contains nonascii values')
+    if len(hexStr) % 2 == 1:
+        if crop:
+            hexStr = hexStr[:-1]
+        else:
+            raise InvalideHexString('Hex string is an odd length')
+    if endianess == 'little':
+        hexStr = flipEndianess(hexStr)
+    return binascii.unhexlify(hexStr.replace('0x', ''))
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
