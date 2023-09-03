@@ -73,7 +73,7 @@ class Leak:
             return possibleSegments[0]
         return None
     def flipEndianess(self, value:str):
-        return ''.join([value[i:i+2] for i in range(0, len(value), 2)][::-1])
+        return ''.join([''.join([value[n:n+8][i:i+2] for i in range(0, 8, 2)][::-1]) for n in range(0, len(value), 8)])
     def findHexValue(self, hexValue, endianess = 'little', previousMatches:list[int]=None) -> list[int]:
         """Searches a hexvalue in the dump and return the indecies found as a list, can use result from previous link to further filter the indecies"""
         if not endianess == self.endianess:
