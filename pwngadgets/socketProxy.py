@@ -10,7 +10,6 @@ def handleConnection(client:socket.socket, address:str, remoteHostName:str, loca
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     serverSocket = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_SSLv23, ciphers="ADH-AES256-SHA")
-
     data = b''
     while True:
         dataChunk = b''

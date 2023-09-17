@@ -118,7 +118,6 @@ class UDPRequestHandler(BaseRequestHandler):
     def send_data(self, data):
         return self.request[1].sendto(data, self.client_address)
 
-
 def main():
     print("Starting nameserver...")
 

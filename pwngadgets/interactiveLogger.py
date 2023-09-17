@@ -1,8 +1,6 @@
 import pwn, pwngadgets, re, binascii
 from pwnlib import term
 
-p = pwngadgets.ncatRemote('ncat --ssl 82039f35-97df-477f-8aea-81a8cb64dd2c.library.m0unt41n.ch 1337')
-
 def interactiveNonprintable(process:pwn.process, *argsm, spawnInteractive=True,**kwargsm):
     t = pwn.tube()
     remainingCharacters = []
