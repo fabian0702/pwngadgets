@@ -2,6 +2,7 @@ README.md
 setup.py
 pwngadgets/__init__.py
 pwngadgets/gadgets.py
+pwngadgets/interactiveLogger.py
 pwngadgets.egg-info/PKG-INFO
 pwngadgets.egg-info/SOURCES.txt
 pwngadgets.egg-info/dependency_links.txt

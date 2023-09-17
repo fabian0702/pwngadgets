@@ -221,39 +221,112 @@ def decodeString(hexValues:list[str]|str, endianess:str='little', crop=False):
         hexStr = flipEndianess(hexStr)
     return binascii.unhexlify(hexStr.replace('0x', ''))
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium import *
+
+def interactive(process:pwn.process, *argsm, spawnInteractive=True,**kwargsm):
+    """"""
+    t = pwn.tube()
+    remainingCharacters = []
+    def send(*args, **kwargs):
+        remainingCharacters.append(args[0])
+        if b'\n' in remainingCharacters:
+            data = b''.join(remainingCharacters)
+            for x in re.findall(b'\\\\x[0-9a-fA-F].', data):
+                data = data.replace(x, binascii.unhexlify(x[2:]))
+            process.send(data, *args[1:], **kwargs)
+            remainingCharacters.clear()
+        else:            
+            process.send(b'', *args[1:], **kwargs)
+    t.send = send
+    
+    def recv(*args, **kwargs):
+        return process.recv(*args, **kwargs)
+    t.recv = recv
+
+    if not spawnInteractive:
+        return t
+
+    t.interactive(*argsm, **kwargsm)
+
+def interactiveToCommads(process:pwn.process, *argsm, printCommands=True, nonPrintableCharacters=True, **kwargsm):
+    t = pwn.tube()
+
+    charactersSending = [b'']
+    linesRecv = []
+    commands = []
+
+    def send(*args, **kwargs):
+        charactersSending.append(args[0])
+        if b'\n' in charactersSending:
+            line = b''.join(charactersSending)
+            if nonPrintableCharacters:
+                for x in re.findall(b'\\\\x[0-9a-fA-F].', line):
+                    line = line.replace(x, binascii.unhexlify(x[2:]))
+                process.send(line)
+            line = line.strip(b'\r\n')
+            if len(linesRecv) > 0:
+                commands.append(f'p.sendlineafter({linesRecv[-1]}, {line})')
+            else:
+                commands.append(f'p.sendline({line})')
+            
+            charactersSending.clear()
+        process.send(args[0] if not nonPrintableCharacters else b'', *args[1:], **kwargs)
+    t.send = send
+
+    def recv(*args, **kwargs):
+        data = process.recv(*args, **kwargs)
+        if data:
+            data += linesRecv.pop() if len(linesRecv) > 0 else b''
+            linesRecv.extend(data.splitlines())
+        return data
+    t.recv = recv
+
+    t.interactive(*argsm, **kwargsm)
+
+    pwn.info('Done, generating commands...')
+
+    if printCommands:
+        print('\n'.join(commands))
+
+    return commands
+
 import time, requests, os, json
 
-def getRemoteFromChallengeName(challengeName:str) -> pwn.remote:
-    def getAuthToken(forceReauth=False):
-        env = os.environ.get('bergAuth', None)
+bergAuthToken = ''
 
-        if not env is None and not forceReauth:
-            return env
-        browser = webdriver.Chrome()
-        browser.get('https://library.m0unt41n.ch/api/v1/login')
-        while not browser.current_url == 'https://library.m0unt41n.ch/':
-            time.sleep(0.1)
+def getAuthToken(forceReauth=False):
+    from selenium import webdriver
 
-        bergAuth = [cookie for cookie in browser.get_cookies() if cookie['name'] == 'berg-auth'][0]
-        browser.close()
-        os.environ.update({'bergAuth':bergAuth['value']})
-        return bergAuth['value']
+    env = os.environ.get('bergAuth', None)
+
+    if not env is None and not forceReauth:
+        return env
+    browser = webdriver.Chrome()
+    browser.get('https://library.m0unt41n.ch/api/v1/login')
+    while not browser.current_url == 'https://library.m0unt41n.ch/':
+        time.sleep(0.1)
+
+    bergAuth = [cookie for cookie in browser.get_cookies() if cookie['name'] == 'berg-auth'][0]
+    browser.close()
+    os.environ.update({'bergAuth':bergAuth['value']})
+    return bergAuth['value']
+
+def getRemoteFromChallengeName(challengeName:str, newBergAuthToken:str=None) -> pwn.remote:
+    global bergAuthToken
+    if newBergAuthToken is None and bergAuthToken is None:
+        bergAuthToken = getAuthToken(forceReauth=False)
+    elif not newBergAuthToken is None:
+        bergAuthToken = newBergAuthToken
 
     session = requests.Session()
 
-    self = {'player':None}
-
-    while self['player'] is None:
-        authToken = getAuthToken()
-        request = requests.get('https://library.m0unt41n.ch/api/v1/self', cookies={'berg-auth':authToken})
+    while True:
+        bergAuthToken = getAuthToken()
+        request = requests.get('https://library.m0unt41n.ch/api/v1/self', cookies={'berg-auth':bergAuthToken})
         self = json.loads(request.content)
         session.cookies = request.cookies
+        if not self['player'] is None:
+            break
 
-    print(self)
     currentChallenge = self['challengeInstance']
 
     if not currentChallenge['name'] is None and not currentChallenge['name'] == challengeName:
@@ -271,3 +344,56 @@ def getRemoteFromChallengeName(challengeName:str) -> pwn.remote:
     ssl = 'chall' in currentChallenge['services']['hostname']
 
     return pwn.remote(currentChallenge['services']['hostname'], currentChallenge['services']['port'], typ=currentChallenge['services']['protocol'], ssl=ssl)
+
+def getFlagFromInteractive(p:pwn.process, flagRegex=r'shc20\d\d{.*}', submit=False) -> str:
+    t = pwn.tube()
+    def send(*args, **kwargs):
+        p.send(*args, **kwargs)
+    t.send = send
+    linesRecv = []
+    def recv(*args, **kwargs):
+        data = p.recv(*args, **kwargs)
+        if data:
+            data += linesRecv.pop() if len(linesRecv) > 0 else b''
+            linesRecv.extend(data.splitlines())
+            flags = re.findall(flagRegex.encode(), data)
+            if len(flags) > 0:
+                submitFlag(flags.pop(), submit)
+        return data
+    t.recv = recv
+
+    t.interactive()
+
+def exfiltrateFlag(p:pwn.process, flagRegex=r'shc20\d\d{.*}', check:bool=True, submit:bool=False) -> str:
+    with open('exfiltrate.sh', 'r') as f:
+        commands = f.read()
+        p.sendline(commands)
+    data = p.recvall()
+    flags = re.findall(flagRegex.encode(), data)
+    pwn.info(f'Found flags {flags}')
+    if not submit:
+        return
+    for flag in flags:
+        if check:
+            pwn.info(f"Do you want to submit the flag '{flag}' (y/n)")
+            if 'y' in input(''):
+                submitFlag(flag)
+                return
+
+def submitFlag(flag:str, challengeName:str=None, newBergAuthToken:str=None, submit:bool=True, check:bool=True) -> None:
+    if check:
+        pwn.info(f"Do you want to submit the flag '{flag}' (y/n)")
+        if not 'y' in input(''):
+            return
+    if not submit and not check:
+        pwn.info(f'Flag: {flag}')
+        return
+    if challengeName is None:
+        global bergAuthToken
+        if newBergAuthToken is None and bergAuthToken is None:
+            bergAuthToken = getAuthToken(forceReauth=False)
+        elif not newBergAuthToken is None:
+            bergAuthToken = newBergAuthToken
+        self = json.loads(requests.get('https://library.m0unt41n.ch/api/v1/self', cookies={'berg-auth':bergAuthToken}))
+        challengeName = self['challengeInstance']['name']
+    requests.post('https://library.m0unt41n.ch/api/v1/flag', data={"challenge": challengeName,"flag": flag})
