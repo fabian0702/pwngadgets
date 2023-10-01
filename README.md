@@ -3,5 +3,5 @@ This is a Library for the ctf framework [pwntools](https://pwntools.com) which p
 ## Installation
 You can run
 ```
-python3 -m pip install -e git+https://github.com/fabian0702/pwngadgets.git#egg=pwngadgets
+python3 -m pip install git+https://github.com/fabian0702/pwngadgets.git#egg=pwngadgets
 ```

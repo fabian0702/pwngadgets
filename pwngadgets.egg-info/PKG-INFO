@@ -1,9 +1,0 @@
-Metadata-Version: 2.1
-Name: pwngadgets
-Version: 0.1.0
-Summary: A python package which provides helper functions for pwntools
-Author: Loris Hirter
-License: MIT
-Classifier: Programming Language :: Python :: 3
-Classifier: License :: OSI Approved :: MIT License
-Classifier: Operating System :: OS Independent
