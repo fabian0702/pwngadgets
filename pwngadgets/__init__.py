@@ -1,4 +1,3 @@
-from gadgets import *
 """
 pwn gadgets
 
@@ -239,18 +238,21 @@ def interactive(process:pwn.process, *argsm, spawnInteractive=True,**kwargsm):
     remainingCharacters = []
     def send(*args, **kwargs):
         remainingCharacters.append(args[0])
-        if b'\n' in remainingCharacters:
+        if b'\n' in args[0]:
             data = b''.join(remainingCharacters)
             for x in re.findall(b'\\\\x[0-9a-fA-F].', data):
                 data = data.replace(x, binascii.unhexlify(x[2:]))
+            for x in re.findall(b'{.+?}', data):
+                result = eval(x[1:-1])
+                data = data.replace(x, str(result) if not result is None else b'')
             process.send(data, *args[1:], **kwargs)
             remainingCharacters.clear()
-        else:            
-            process.send(b'', *args[1:], **kwargs)
+
     t.send = send
     
     def recv(*args, **kwargs):
         return process.recv(*args, **kwargs)
+    
     t.recv = recv
 
     if not spawnInteractive:
